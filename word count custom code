@@ -1,0 +1,123 @@
+/**
+ * Permanent Word Count Plugin for Thymer
+ * 
+ * Features:
+ * - Always-visible word count in status bar
+ * - Updates as you type
+ * - Click for detailed statistics
+ */
+class Plugin extends AppPlugin {
+	
+	onLoad() {
+		// Create status bar item
+		this.statusBarItem = this.ui.addStatusBarItem({
+			icon: 'ti-file-text',
+			label: '0 words',
+			tooltip: 'Word count - Click for details',
+			onClick: () => {
+				this.showDetailedStats();
+			}
+		});
+		// Update word count periodically
+		this.updateInterval = setInterval(() => {
+			this.updateWordCount();
+		}, 1000); // Update every second
+		// Initial update
+		this.updateWordCount();
+		// Add command for manual refresh
+		this.ui.addCommandPaletteCommand({
+			label: "Word Count: Refresh",
+			icon: "ti-refresh",
+			onSelected: async () => {
+				this.updateWordCount();
+			}
+		});
+	}
+	// Get all text from current note
+	getAllText() {
+		try {
+			// Method 1: Try to get from g_view items (current visible items)
+			const view = window.g_view;
+			if (view && view.items) {
+				const allText = [];
+				view.items.forEach(item => {
+					if (item.state && item.state.text_segments && item.state.text_segments.length > 1) {
+						// Skip first element (formatting), join the rest
+						const text = item.state.text_segments.slice(1).join('');
+						if (text.trim()) {
+							allText.push(text);
+						}
+					}
+				});
+				if (allText.length > 0) {
+					return allText.join(' ');
+				}
+			}
+			// Method 2: Fallback to DOM scraping
+			const listItems = document.querySelectorAll('.listitem-text, .listitem-heading, .listitem-ulist, .listitem-quote');
+			const allText = [];
+			listItems.forEach(item => {
+				const text = item.textContent?.trim();
+				if (text && text.length > 0) {
+					allText.push(text);
+				}
+			});
+			return allText.join(' ');
+		} catch (e) {
+			console.error('Error getting text:', e);
+			return '';
+		}
+	}
+	// Count words and characters
+	countText(text) {
+		if (!text || text.trim().length === 0) {
+			return { words: 0, characters: 0, charactersNoSpaces: 0, lines: 0 };
+		}
+		const words = text.trim().split(/\s+/).filter(word => word.length > 0);
+		const wordCount = words.length;
+		const charCount = text.length;
+		const charNoSpaces = text.replace(/\s/g, '').length;
+		const lines = text.split('\n').length;
+		return {
+			words: wordCount,
+			characters: charCount,
+			charactersNoSpaces: charNoSpaces,
+			lines: lines
+		};
+	}
+	// Update word count in status bar
+	updateWordCount() {
+		const text = this.getAllText();
+		const counts = this.countText(text);
+		// Update status bar
+		this.statusBarItem.setLabel(`${counts.words} words`);
+		this.statusBarItem.setTooltip(`Words: ${counts.words}\nCharacters: ${counts.characters}\nClick for more details`);
+		// Store counts for detailed view
+		this.currentCounts = counts;
+	}
+	// Show detailed statistics
+	showDetailedStats() {
+		if (!this.currentCounts) {
+			this.updateWordCount();
+		}
+		const counts = this.currentCounts;
+		const readingTime = Math.ceil(counts.words / 200);
+		const speakingTime = Math.ceil(counts.words / 150);
+		this.ui.addToaster({
+			title: "📊 Document Statistics",
+			message: `Words: ${counts.words}
+Characters: ${counts.characters} (${counts.charactersNoSpaces} no spaces)
+Lines: ${counts.lines}
+Reading time: ~${readingTime} ${readingTime === 1 ? 'minute' : 'minutes'}
+Speaking time: ~${speakingTime} ${speakingTime === 1 ? 'minute' : 'minutes'}`,
+			dismissible: true,
+			autoDestroyTime: 6000
+		});
+	}
+	// Clean up on unload
+	onUnload() {
+		if (this.updateInterval) {
+			clearInterval(this.updateInterval);
+		}
+	}
+}
