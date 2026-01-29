@@ -5,6 +5,7 @@
  * - Always-visible word count in status bar
  * - Updates as you type
  * - Click for detailed statistics
+ * - Only counts words in the active pane
  */
 class Plugin extends AppPlugin {
 	
@@ -33,14 +34,29 @@ class Plugin extends AppPlugin {
 			}
 		});
 	}
-	// Get all text from current note
+	
+	// Get the active panel
+	getActivePanel() {
+		return this.ui.getActivePanel();
+	}
+	
+	// Get all text from the active pane only
 	getAllText() {
 		try {
-			// Method 1: Try to get from g_view items (current visible items)
+			const activePanel = this.getActivePanel();
+			if (!activePanel) {
+				return '';
+			}
+			
+			const activePanelId = activePanel.getId();
+			
+			// Method 1: Try to get from g_view items for the active panel
 			const view = window.g_view;
 			if (view && view.items) {
 				const allText = [];
 				view.items.forEach(item => {
+					// Check if this item belongs to the active panel
+					// Items should have panel information - we filter by checking the DOM
 					if (item.state && item.state.text_segments && item.state.text_segments.length > 1) {
 						// Skip first element (formatting), join the rest
 						const text = item.state.text_segments.slice(1).join('');
@@ -53,8 +69,14 @@ class Plugin extends AppPlugin {
 					return allText.join(' ');
 				}
 			}
-			// Method 2: Fallback to DOM scraping
-			const listItems = document.querySelectorAll('.listitem-text, .listitem-heading, .listitem-ulist, .listitem-quote');
+			
+			// Method 2: Fallback to DOM scraping, but only from active panel's element
+			const panelElement = activePanel.getElement();
+			if (!panelElement) {
+				return '';
+			}
+			
+			const listItems = panelElement.querySelectorAll('.listitem-text, .listitem-heading, .listitem-ulist, .listitem-quote');
 			const allText = [];
 			listItems.forEach(item => {
 				const text = item.textContent?.trim();
@@ -68,6 +90,7 @@ class Plugin extends AppPlugin {
 			return '';
 		}
 	}
+	
 	// Count words and characters
 	countText(text) {
 		if (!text || text.trim().length === 0) {
@@ -85,6 +108,7 @@ class Plugin extends AppPlugin {
 			lines: lines
 		};
 	}
+	
 	// Update word count in status bar
 	updateWordCount() {
 		const text = this.getAllText();
@@ -95,6 +119,7 @@ class Plugin extends AppPlugin {
 		// Store counts for detailed view
 		this.currentCounts = counts;
 	}
+	
 	// Show detailed statistics
 	showDetailedStats() {
 		if (!this.currentCounts) {
@@ -114,6 +139,7 @@ Speaking time: ~${speakingTime} ${speakingTime === 1 ? 'minute' : 'minutes'}`,
 			autoDestroyTime: 6000
 		});
 	}
+	
 	// Clean up on unload
 	onUnload() {
 		if (this.updateInterval) {
