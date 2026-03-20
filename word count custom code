@@ -1,149 +1,99 @@
-/**
- * Permanent Word Count Plugin for Thymer
- * 
- * Features:
- * - Always-visible word count in status bar
- * - Updates as you type
- * - Click for detailed statistics
- * - Only counts words in the active pane
- */
 class Plugin extends AppPlugin {
-	
-	onLoad() {
-		// Create status bar item
-		this.statusBarItem = this.ui.addStatusBarItem({
-			icon: 'ti-file-text',
-			label: '0 words',
-			tooltip: 'Word count - Click for details',
-			onClick: () => {
-				this.showDetailedStats();
-			}
-		});
-		// Update word count periodically
-		this.updateInterval = setInterval(() => {
-			this.updateWordCount();
-		}, 1000); // Update every second
-		// Initial update
-		this.updateWordCount();
-		// Add command for manual refresh
-		this.ui.addCommandPaletteCommand({
-			label: "Word Count: Refresh",
-			icon: "ti-refresh",
-			onSelected: async () => {
-				this.updateWordCount();
-			}
-		});
-	}
-	
-	// Get the active panel
-	getActivePanel() {
-		return this.ui.getActivePanel();
-	}
-	
-	// Get all text from the active pane only
-	getAllText() {
-		try {
-			const activePanel = this.getActivePanel();
-			if (!activePanel) {
-				return '';
-			}
-			
-			const activePanelId = activePanel.getId();
-			
-			// Method 1: Try to get from g_view items for the active panel
-			const view = window.g_view;
-			if (view && view.items) {
-				const allText = [];
-				view.items.forEach(item => {
-					// Check if this item belongs to the active panel
-					// Items should have panel information - we filter by checking the DOM
-					if (item.state && item.state.text_segments && item.state.text_segments.length > 1) {
-						// Skip first element (formatting), join the rest
-						const text = item.state.text_segments.slice(1).join('');
-						if (text.trim()) {
-							allText.push(text);
-						}
-					}
-				});
-				if (allText.length > 0) {
-					return allText.join(' ');
-				}
-			}
-			
-			// Method 2: Fallback to DOM scraping, but only from active panel's element
-			const panelElement = activePanel.getElement();
-			if (!panelElement) {
-				return '';
-			}
-			
-			const listItems = panelElement.querySelectorAll('.listitem-text, .listitem-heading, .listitem-ulist, .listitem-quote');
-			const allText = [];
-			listItems.forEach(item => {
-				const text = item.textContent?.trim();
-				if (text && text.length > 0) {
-					allText.push(text);
-				}
-			});
-			return allText.join(' ');
-		} catch (e) {
-			console.error('Error getting text:', e);
-			return '';
-		}
-	}
-	
-	// Count words and characters
-	countText(text) {
-		if (!text || text.trim().length === 0) {
-			return { words: 0, characters: 0, charactersNoSpaces: 0, lines: 0 };
-		}
-		const words = text.trim().split(/\s+/).filter(word => word.length > 0);
-		const wordCount = words.length;
-		const charCount = text.length;
-		const charNoSpaces = text.replace(/\s/g, '').length;
-		const lines = text.split('\n').length;
-		return {
-			words: wordCount,
-			characters: charCount,
-			charactersNoSpaces: charNoSpaces,
-			lines: lines
-		};
-	}
-	
-	// Update word count in status bar
-	updateWordCount() {
-		const text = this.getAllText();
-		const counts = this.countText(text);
-		// Update status bar
-		this.statusBarItem.setLabel(`${counts.words} words`);
-		this.statusBarItem.setTooltip(`Words: ${counts.words}\nCharacters: ${counts.characters}\nClick for more details`);
-		// Store counts for detailed view
-		this.currentCounts = counts;
-	}
-	
-	// Show detailed statistics
-	showDetailedStats() {
-		if (!this.currentCounts) {
-			this.updateWordCount();
-		}
-		const counts = this.currentCounts;
-		const readingTime = Math.ceil(counts.words / 200);
-		const speakingTime = Math.ceil(counts.words / 150);
-		this.ui.addToaster({
-			title: "📊 Document Statistics",
-			message: `Words: ${counts.words}
-Characters: ${counts.characters} (${counts.charactersNoSpaces} no spaces)
-Lines: ${counts.lines}
-Reading time: ~${readingTime} ${readingTime === 1 ? 'minute' : 'minutes'}
-Speaking time: ~${speakingTime} ${speakingTime === 1 ? 'minute' : 'minutes'}`,
-			dismissible: true,
-			autoDestroyTime: 6000
-		});
-	}
-	
-	// Clean up on unload
-	onUnload() {
-		if (this.updateInterval) {
-			clearInterval(this.updateInterval);
-		}
-	}
+
+    onLoad() {
+        this.currentCounts = null;
+
+        this.statusBarItem = this.ui.addStatusBarItem({
+            icon: 'file-text',
+            label: '0 words',
+            tooltip: 'Word count — click for details',
+            onClick: () => this.showDetailedStats()
+        });
+
+        this.commands = [
+            this.ui.addCommandPaletteCommand({
+                label: "Word Count: Refresh",
+                icon: "refresh",
+                onSelected: () => this.updateWordCount()
+            }),
+            this.ui.addCommandPaletteCommand({
+                label: "Word Count: Show",
+                icon: "file-text",
+                onSelected: () => this.showDetailedStats()
+            }),
+        ];
+
+        this.updateWordCount();
+        this.updateInterval = setInterval(() => this.updateWordCount(), 1000);
+    }
+
+    onUnload() {
+        clearInterval(this.updateInterval);
+        this.statusBarItem?.remove();
+        this.commands?.forEach(c => c.remove());
+    }
+
+    async updateWordCount() {
+        const text = await this.getActiveText();
+        this.currentCounts = this.countText(text);
+
+        const { words, characters } = this.currentCounts;
+        this.statusBarItem.setLabel(`${words} words`);
+        this.statusBarItem.setTooltip(`Words: ${words}\nCharacters: ${characters}\nClick for details`);
+    }
+
+    async getActiveText() {
+        try {
+            const record = this.ui.getActivePanel()?.getActiveRecord();
+            if (!record) return '';
+
+            const lineItems = await record.getLineItems();
+
+            return lineItems
+                .map(item => this.segmentsToText(item.segments))
+                .filter(Boolean)
+                .join('\n');
+        } catch (e) {
+            console.error('[Word Count] Error getting text:', e);
+            return '';
+        }
+    }
+
+    segmentsToText(segments) {
+        if (!segments?.length) return '';
+        return segments
+            .map(seg => typeof seg.text === 'string' ? seg.text : (seg.text?.title ?? ''))
+            .join('');
+    }
+
+    countText(text) {
+        if (!text?.trim()) {
+            return { words: 0, characters: 0, charactersNoSpaces: 0, lines: 0 };
+        }
+        return {
+            words: text.trim().split(/\s+/).filter(w => w.length > 0).length,
+            characters: text.length,
+            charactersNoSpaces: text.replace(/\s/g, '').length,
+            lines: text.split('\n').length,
+        };
+    }
+
+    showDetailedStats() {
+        if (!this.currentCounts) return;
+        const { words, characters, charactersNoSpaces, lines } = this.currentCounts;
+        const reading = Math.ceil(words / 200);
+        const speaking = Math.ceil(words / 150);
+
+        this.ui.addToaster({
+            title: "Document Statistics",
+            message:
+                `Words: ${words}\n` +
+                `Characters: ${characters} (${charactersNoSpaces} no spaces)\n` +
+                `Lines: ${lines}\n` +
+                `Reading time: ~${reading} ${reading === 1 ? 'minute' : 'minutes'}\n` +
+                `Speaking time: ~${speaking} ${speaking === 1 ? 'minute' : 'minutes'}`,
+            dismissible: true,
+            autoDestroyTime: 6000
+        });
+    }
 }
